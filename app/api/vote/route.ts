@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { kv } from '@vercel/kv'
+import { supabase } from '@/lib/supabase'
 import { THEMES } from '@/lib/themes'
 
 const VALID_IDS = new Set(THEMES.map(t => t.id))
 
+// ─── POST /api/vote — submit 2 votes ────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -14,7 +15,7 @@ export async function POST(req: NextRequest) {
     }
 
     // --- Validation ---
-    if (!name || !district || !Array.isArray(votes)) {
+    if (!name?.trim() || !district?.trim() || !Array.isArray(votes)) {
       return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 })
     }
     if (votes.length !== 2) {
@@ -27,45 +28,72 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid theme ID.' }, { status: 400 })
     }
 
+    const normalName = name.trim().toLowerCase()
+    const normalDistrict = district.trim().toLowerCase()
+
     // --- Duplicate vote prevention ---
-    const voterKey = `voter:${name.toLowerCase().trim()}:${district.toLowerCase().trim()}`
-    const alreadyVoted = await kv.get(voterKey)
-    if (alreadyVoted) {
-      return NextResponse.json({ error: 'You have already submitted your votes.' }, { status: 409 })
+    const { data: existing, error: checkError } = await supabase
+      .from('voters')
+      .select('id')
+      .eq('name', normalName)
+      .eq('district', normalDistrict)
+      .maybeSingle()
+
+    if (checkError) throw checkError
+
+    if (existing) {
+      return NextResponse.json(
+        { error: 'You have already submitted your votes.' },
+        { status: 409 }
+      )
     }
 
-    // --- Persist votes atomically ---
-    const pipeline = kv.pipeline()
+    // --- Record voter (prevents double voting) ---
+    const { error: voterError } = await supabase
+      .from('voters')
+      .insert({ name: normalName, district: normalDistrict })
 
-    // Mark voter as done (expire in 7 days so stale data auto-clears)
-    pipeline.set(voterKey, '1', { ex: 60 * 60 * 24 * 7 })
+    if (voterError) throw voterError
 
-    // Increment vote counters for each chosen theme
-    for (const id of votes) {
-      pipeline.hincrby('theme_votes', id, 1)
-    }
+    // --- Record individual votes ---
+    const voteRows = votes.map(themeId => ({
+      theme_id: themeId,
+      voter_name: normalName,
+      voter_district: normalDistrict,
+    }))
 
-    await pipeline.exec()
+    const { error: votesError } = await supabase
+      .from('votes')
+      .insert(voteRows)
+
+    if (votesError) throw votesError
 
     return NextResponse.json({ ok: true })
   } catch (err) {
-    console.error('[/api/vote] error:', err)
+    console.error('[POST /api/vote]', err)
     return NextResponse.json({ error: 'Server error. Please try again.' }, { status: 500 })
   }
 }
 
+// ─── GET /api/vote — fetch vote tallies ─────────────────────────────────────
 export async function GET() {
   try {
-    // Returns { [themeId]: voteCount } for the results page
-    const raw = await kv.hgetall('theme_votes')
-    // Ensure all themes are present even with 0 votes
+    const { data, error } = await supabase
+      .from('votes')
+      .select('theme_id')
+
+    if (error) throw error
+
+    // Count votes per theme, default every theme to 0
     const totals: Record<string, number> = {}
-    for (const t of THEMES) {
-      totals[t.id] = raw ? Number(raw[t.id] ?? 0) : 0
+    for (const t of THEMES) totals[t.id] = 0
+    for (const row of data ?? []) {
+      if (totals[row.theme_id] !== undefined) totals[row.theme_id]++
     }
+
     return NextResponse.json(totals)
   } catch (err) {
-    console.error('[/api/vote GET] error:', err)
+    console.error('[GET /api/vote]', err)
     return NextResponse.json({ error: 'Failed to fetch results.' }, { status: 500 })
   }
 }
