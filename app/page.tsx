@@ -100,6 +100,9 @@ export default function LoginPage() {
         <p className="text-center text-xs text-stone-400 mt-8 animate-fade-up animation-delay-300">
           No account needed · Your vote is anonymous
         </p>
+        <p className="text-center text-xs text-stone-400 mt-8 animate-fade-up animation-delay-300">
+          Made With ❤️ by Joe
+        </p>
       </div>
     </main>
   )
