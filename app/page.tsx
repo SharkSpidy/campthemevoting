@@ -38,7 +38,7 @@ export default function LoginPage() {
           <h1 className="font-display text-4xl font-bold text-stone-900 leading-tight tracking-tight">
             Camp Theme
             <br />
-            <span className="text-amber-700">Vote 2025</span>
+            <span className="text-amber-700">Vote 2026</span>
           </h1>
           <p className="mt-3 text-stone-500 text-sm leading-relaxed">
             Tell us who you are to cast your votes.
